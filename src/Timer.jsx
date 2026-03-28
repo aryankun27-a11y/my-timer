@@ -350,7 +350,34 @@ export default function Timer() {
 
   const endTimeRef = useRef(null);
   const rafRef = useRef(null);
+  const wakeLockRef = useRef(null);
   const t = getTheme(data.theme);
+
+  const requestWakeLock = useCallback(async () => {
+    try {
+      if ("wakeLock" in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      }
+    } catch {}
+  }, []);
+
+  const releaseWakeLock = useCallback(async () => {
+    if (wakeLockRef.current) {
+      await wakeLockRef.current.release();
+      wakeLockRef.current = null;
+    }
+  }, []);
+
+  // Re-acquire wake lock when tab becomes visible again (browser drops it on tab switch)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && running) {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [running, requestWakeLock]);
 
   const mins = Math.floor(remaining / 60);
   const secs = remaining % 60;
@@ -379,6 +406,7 @@ export default function Timer() {
 
   useEffect(() => {
     if (running) {
+      requestWakeLock();
       endTimeRef.current = Date.now() + remaining * 1000;
       const currentLabel = sessionLabel;
       const currentMins = Math.round(totalSecs / 60);
@@ -386,6 +414,7 @@ export default function Timer() {
         const left = Math.round((endTimeRef.current - Date.now()) / 1000);
         if (left <= 0) {
           setRemaining(0); setRunning(false); setDone(true);
+          releaseWakeLock();
           playChime();
           sendNotification(currentLabel);
           logSession(currentLabel, currentMins);
@@ -395,6 +424,8 @@ export default function Timer() {
         rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
+    } else {
+      releaseWakeLock();
     }
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, [running]);
